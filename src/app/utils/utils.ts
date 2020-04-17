@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import { Observable } from 'rxjs';
 import { TimeTooLongError } from '../exceptions/TimeTooLongError';
 
 export function delay(time) {
@@ -21,4 +22,31 @@ export function delay(time) {
       reject(new TimeTooLongError());
     }, time);
   });
+}
+
+export function sequence(obs: Observable<any>) {
+  const timeBeforeSkeleton = 250;
+  const minimumTimeOfSkeleton = 500;
+  const observable = new Observable(observer => {
+    const start = new Date().getTime();
+    let end = null;
+
+    const timer = setTimeout(() => {
+      observer.next(null);
+      end = new Date().getTime();
+    }, timeBeforeSkeleton);
+
+    obs.subscribe((e) => {
+      clearTimeout(timer);
+      if (end && (end - start) < minimumTimeOfSkeleton) {
+        setTimeout(() => {
+          observer.next(e);
+        }, minimumTimeOfSkeleton - (end - start));
+      } else {
+        observer.next(e);
+      }
+    });
+
+  });
+  return observable;
 }

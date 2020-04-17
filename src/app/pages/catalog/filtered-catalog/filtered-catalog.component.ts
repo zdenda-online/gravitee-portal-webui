@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 import { Component, HostListener, OnInit } from '@angular/core';
-import { Api, ApiService, CategoryApiQuery, View, ApiMetrics } from '@gravitee/ng-portal-webclient';
+import { Api, ApiService, CategoryApiQuery, View, ApiMetrics, ApisResponse } from '@gravitee/ng-portal-webclient';
 import '@gravitee/ui-components/wc/gv-promote';
 import '@gravitee/ui-components/wc/gv-card-list';
 import '@gravitee/ui-components/wc/gv-card-full';
@@ -24,7 +24,7 @@ import '@gravitee/ui-components/wc/gv-option';
 import { marker as i18n } from '@biesbjerg/ngx-translate-extract-marker';
 import { ActivatedRoute, Router } from '@angular/router';
 import { SearchQueryParam } from '../../../utils/search-query-param.enum';
-import { forkJoin } from 'rxjs';
+import { forkJoin, Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
 import { ApiStatesPipe } from '../../../pipes/api-states.pipe';
@@ -32,7 +32,7 @@ import { ApiLabelsPipe } from '../../../pipes/api-labels.pipe';
 import { ConfigurationService } from '../../../services/configuration.service';
 import { FeatureEnum } from '../../../model/feature.enum';
 import { TimeTooLongError } from '../../../exceptions/TimeTooLongError';
-import { delay } from '../../../utils/utils';
+import { delay, sequence } from '../../../utils/utils';
 
 @Component({
   selector: 'app-all',
@@ -50,7 +50,7 @@ export class FilteredCatalogComponent implements OnInit {
 
   allApis: Array<Promise<{ item: Api, metric: any }>>;
   randomList: Promise<any>[];
-  promotedApi: Promise<any>;
+  promotedApi: Api;
   promotedMetrics: ApiMetrics;
   categoryApiQuery: CategoryApiQuery;
   views: Array<string>;
@@ -71,7 +71,7 @@ export class FilteredCatalogComponent implements OnInit {
               private apiStates: ApiStatesPipe,
               private apiLabels: ApiLabelsPipe,
               private config: ConfigurationService,
-              ) {
+  ) {
     this.allApis = [];
     this.randomList = [];
   }
@@ -94,7 +94,8 @@ export class FilteredCatalogComponent implements OnInit {
           this.page = page;
           this.size = size;
 
-          Promise.race([this._loadCategory(), delay(500)]).catch((err) => this._catchLoading(err));
+          this._loadCategory();
+
         }
       } else {
         const view = params.get('view') || FilteredCatalogComponent.DEFAULT_VIEW;
@@ -102,26 +103,10 @@ export class FilteredCatalogComponent implements OnInit {
           this.currentView = view;
           this.page = page;
           this.size = size;
-
-          Promise.race([this._load(), delay(500)]).catch((err) => this._catchLoading(err));
+          this._load();
         }
       }
     });
-  }
-
-  private _catchLoading(err) {
-    if (err instanceof TimeTooLongError) {
-      // @ts-ignore
-      this.promotedApi = new Promise(null);
-      if (this.randomList.length === 0) {
-        this.randomList = new Array(4).fill(new Promise(null));
-      }
-      if (this.allApis.length === 0) {
-        this.allApis = new Array(this.size).fill(new Promise(null));
-      }
-    } else {
-      throw err;
-    }
   }
 
   private _initDisplayOptions() {
@@ -132,7 +117,7 @@ export class FilteredCatalogComponent implements OnInit {
         active: this.inDefaultDisplay(),
         title: i18n('catalog.display.cards'),
       },
-      { id: 'list', icon: 'layout:layout-horizontal', active: !this.inDefaultDisplay(), title: i18n('catalog.display.list') }
+      {id: 'list', icon: 'layout:layout-horizontal', active: !this.inDefaultDisplay(), title: i18n('catalog.display.list')}
     ].map((option) => {
       this.translateService.get(option.title).subscribe((title) => option.title = title);
       // @ts-ignore
@@ -144,7 +129,7 @@ export class FilteredCatalogComponent implements OnInit {
   _load() {
     let promotedApiPromise = null;
     if (this.page === 1) {
-      promotedApiPromise = this._loadPromotedApi({ size: 1, cat: this.categoryApiQuery });
+      promotedApiPromise = this._loadPromotedApi({size: 1, cat: this.categoryApiQuery});
     }
     return Promise.all([
       this._loadRandomList(),
@@ -153,47 +138,64 @@ export class FilteredCatalogComponent implements OnInit {
   }
 
   _loadRandomList() {
-    return this.apiService.getApis({ size: FilteredCatalogComponent.RANDOM_MAX_SIZE, _cat: this.categoryApiQuery })
-      .toPromise()
-      .then((apiResponse) => {
-        this.randomList = apiResponse.data.map((a) => {
-          // @ts-ignore
-          a.states = this.apiStates.transform(a);
-          return Promise.resolve(a);
-        });
 
-      })
-      .catch((err) => {
-        // @ts-ignore
-        this.randomList = this.randomList.fill(() => Promise.reject(err));
-      });
+    const size = FilteredCatalogComponent.RANDOM_MAX_SIZE;
+    sequence(this.apiService.getApis({size, _cat: this.categoryApiQuery})).subscribe({
+      next: (apiResponse: ApisResponse | null) => {
+        if (apiResponse) {
+          this.randomList = apiResponse.data.map((a) => {
+            // @ts-ignore
+            a.states = this.apiStates.transform(a);
+            return Promise.resolve(a);
+          });
+        } else {
+          this.randomList = new Array(4).fill(null);
+        }
+      },
+      error: () => {
+        this.randomList = this.randomList.fill(undefined);
+      }
+    });
+    // return this.apiService.getApis({size: FilteredCatalogComponent.RANDOM_MAX_SIZE, _cat: this.categoryApiQuery})
+    //   .toPromise()
+    //   .then((apiResponse) => {
+    //     this.randomList = apiResponse.data.map((a) => {
+    //       // @ts-ignore
+    //       a.states = this.apiStates.transform(a);
+    //       return Promise.resolve(a);
+    //     });
+    //
+    //   })
+    //   .catch((err) => {
+    //     // @ts-ignore
+    //   });
   }
 
+
   _loadPromotedApi(requestParams) {
-    return this.apiService.getApis(requestParams)
-      .toPromise()
-      .then(async (response) => {
+    sequence(this.apiService.getApis(requestParams)).subscribe(async (response: ApisResponse | null) => {
+      if (response) {
         const promoted = response.data[0];
         if (promoted) {
-          this.promotedMetrics = await this.apiService.getApiMetricsByApiId({ apiId: promoted.id }).toPromise();
+          sequence(this.apiService.getApiMetricsByApiId({apiId: promoted.id})).subscribe((metrics) => this.promotedMetrics = metrics);
         }
-        // @ts-ignore
-        this.promotedApi = Promise.resolve(promoted || {});
-        return this.promotedApi;
-      })
-      .catch((err) => Promise.reject(err));
+        this.promotedApi = promoted;
+      } else {
+        this.promotedApi = null;
+      }
+    });
   }
 
   _loadCategory() {
     this.category = this.activatedRoute.snapshot.data.category;
-    return this._loadCards(this._loadPromotedApi({ size: 1, view: this.currentView }));
+    return this._loadCards(this._loadPromotedApi({size: 1, view: this.currentView}));
   }
 
   async _loadCards(promotedApiPromise) {
     const size = this.size + (promotedApiPromise ? 1 : 0);
 
     return forkJoin([
-      this.apiService.getApis({ page: this.page, size, cat: this.categoryApiQuery, view: this.currentView }),
+      this.apiService.getApis({page: this.page, size, cat: this.categoryApiQuery, view: this.currentView}),
       this.translateService.get(i18n('catalog.defaultView')),
     ])
       .pipe(map(([allPage, label]) => [allPage.data, label, allPage.metadata]))
@@ -203,13 +205,13 @@ export class FilteredCatalogComponent implements OnInit {
         this.paginationData = metadata.pagination;
 
         if (this.hasViewMode() && this.views == null) {
-          this.apiService.getApis({ size: -1, cat: this.categoryApiQuery })
+          this.apiService.getApis({size: -1, cat: this.categoryApiQuery})
             .subscribe((apisResponse) => {
               // @ts-ignore
               const views = this._getViews(apisResponse.data.slice(1));
               if (views.length > 0) {
                 // @ts-ignore
-                this.views = [{ value: FilteredCatalogComponent.DEFAULT_VIEW, label }].concat(views);
+                this.views = [{value: FilteredCatalogComponent.DEFAULT_VIEW, label}].concat(views);
               } else {
                 this.views = [];
               }
@@ -221,11 +223,11 @@ export class FilteredCatalogComponent implements OnInit {
         }
 
         this.allApis = allList.map((a) => {
-          const metric = this.apiService.getApiMetricsByApiId({ apiId: a.id }).toPromise();
+          const metric = this.apiService.getApiMetricsByApiId({apiId: a.id}).toPromise();
           a.states = this.apiStates.transform(a);
           a.labels = this.apiLabels.transform(a);
           const item = Promise.resolve(a);
-          return { item, metric };
+          return {item, metric};
         });
 
       })
@@ -241,7 +243,7 @@ export class FilteredCatalogComponent implements OnInit {
   }
 
   @HostListener(':gv-pagination:paginate', ['$event.detail'])
-  _onPaginate({ page }) {
+  _onPaginate({page}) {
     if (this.paginationData.current_page !== page) {
       const queryParams = {};
       queryParams[SearchQueryParam.PAGE] = page;
@@ -255,10 +257,10 @@ export class FilteredCatalogComponent implements OnInit {
   }
 
   @HostListener(':gv-option:select', ['$event.detail'])
-  _onChangeDisplay({ id }) {
+  _onChangeDisplay({id}) {
     this.router.navigate([], {
       relativeTo: this.activatedRoute,
-      queryParams: { display: id },
+      queryParams: {display: id},
       queryParamsHandling: 'merge',
       fragment: this.fragments.filter
     }).then(() => {
@@ -267,11 +269,11 @@ export class FilteredCatalogComponent implements OnInit {
     });
   }
 
-  onSelectView({ target }) {
-    const queryParams = { view: target.value };
+  onSelectView({target}) {
+    const queryParams = {view: target.value};
     queryParams[SearchQueryParam.PAGE] = 1;
     this.router.navigate([],
-      { relativeTo: this.activatedRoute, queryParams, queryParamsHandling: 'merge', fragment: this.fragments.filter });
+      {relativeTo: this.activatedRoute, queryParams, queryParamsHandling: 'merge', fragment: this.fragments.filter});
   }
 
   inDefaultDisplay() {
