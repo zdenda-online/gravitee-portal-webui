@@ -13,30 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { Component, OnInit, Input } from '@angular/core';
-import * as marked from 'marked';
-import { PageService } from 'src/app/services/page.service';
+import { Injectable } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { Page } from '@gravitee/ng-portal-webclient';
 
-@Component({
-  selector: 'app-gv-page-markdown',
-  templateUrl: './gv-page-markdown.component.html',
-  styleUrls: ['./gv-page-markdown.component.css'],
+@Injectable({
+  providedIn: 'root'
 })
-
-export class GvPageMarkdownComponent implements OnInit {
-
-  @Input() withToc: boolean;
+export class PageService {
+  private readonly currentPageSource: BehaviorSubject<Page>;
 
   constructor(
-    private pageService: PageService,
-  ) { }
+  ) {
+    this.currentPageSource = new BehaviorSubject<Page>(null);
+  }
 
-  pageContent: string;
+  disposePage() {
+    this.currentPageSource.next(null);
+  }
 
-  ngOnInit() {
-    const page = this.pageService.getCurrentPage();
-    if (page && page.content) {
-      this.pageContent = marked(page.content);
-    }
+  get(): BehaviorSubject<Page> {
+    return this.currentPageSource;
+  }
+
+  set(page: Page) {
+    this.currentPageSource.next(page);
+  }
+
+  getCurrentPage() {
+    return this.currentPageSource.getValue();
   }
 }

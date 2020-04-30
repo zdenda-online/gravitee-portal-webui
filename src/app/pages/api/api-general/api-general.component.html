@@ -23,7 +23,7 @@
       <p>{{ description }}</p>
     </div>
 
-    <app-gv-page *ngIf="homepage" [page]="homepage"></app-gv-page>
+    <app-gv-page *ngIf="homepage" [page]="homepage" class="api__section__block"></app-gv-page>
 
     <div class="api__section__block" *ngIf="canRate">
       <h4 class="title">{{ "apiGeneral.giveRating" | translate}}</h4>
@@ -83,6 +83,7 @@
   </section>
 
   <aside class="api__aside">
+    <app-gv-markdown-toc></app-gv-markdown-toc>
     <gv-info [item]="currentApi" [metrics]="currentApiMetrics" [resources]="resources" [miscellaneous]="miscellaneous"></gv-info>
     <gv-list *ngIf="linkedApp" [items]="linkedApp" title="{{ 'api.list.connectedApp' | translate }}" clickable></gv-list>
   </aside>
